@@ -108,13 +108,8 @@ const StudentDashboard: React.FC = () => {
     }
   };
 
-  // Helper function to refresh both menu items and cart items
-  const refreshMenuAndCart = async () => {
-    await Promise.all([fetchMenuItems(), fetchCartItems()]);
-  };
-
-  // Helper function to update inventory in database
-  const updateInventory = async (menuItemId: string, quantityChange: number) => {
+  // Helper function to update inventory in database and refresh menu
+  const updateInventoryAndRefresh = async (menuItemId: string, quantityChange: number) => {
     try {
       // Get current quantity
       const { data: currentItem, error: fetchError } = await supabase
@@ -125,18 +120,20 @@ const StudentDashboard: React.FC = () => {
 
       if (fetchError) throw fetchError;
 
-      const newQuantity = currentItem.quantity_available + quantityChange;
+      const newQuantity = Math.max(0, currentItem.quantity_available + quantityChange);
       
       // Update the inventory
       const { error: updateError } = await supabase
         .from('menu_items')
-        .update({ quantity_available: Math.max(0, newQuantity) })
+        .update({ quantity_available: newQuantity })
         .eq('id', menuItemId);
 
       if (updateError) throw updateError;
 
-      // Refresh menu items to show updated quantities
+      // Immediately refresh menu items to show updated quantities
       await fetchMenuItems();
+      
+      console.log(`Inventory updated: Item ${menuItemId}, Change: ${quantityChange}, New Quantity: ${newQuantity}`);
     } catch (error) {
       console.error('Error updating inventory:', error);
       throw error;
@@ -161,14 +158,28 @@ const StudentDashboard: React.FC = () => {
       const existingItem = cartItems.find(item => item.menu_item_id === menuItem.id);
 
       if (existingItem) {
-        // Check if adding one more would exceed available quantity
-        if (existingItem.quantity >= menuItem.quantity_available) {
-          showToast(`Only ${menuItem.quantity_available} items available`, 'error');
+        // Item already exists in cart - increase quantity by 1
+        const newQuantity = existingItem.quantity + 1;
+        
+        // Check if we have enough inventory
+        if (menuItem.quantity_available < 1) {
+          showToast('No more items available in stock', 'error');
           return;
         }
         
         // Update cart quantity
-        await updateCartQuantity(existingItem.id, existingItem.quantity + 1);
+        const { error: cartError } = await supabase
+          .from('cart_items')
+          .update({ quantity: newQuantity })
+          .eq('id', existingItem.id);
+
+        if (cartError) throw cartError;
+        
+        // Decrease inventory by 1
+        await updateInventoryAndRefresh(menuItem.id, -1);
+        
+        // Refresh cart
+        await fetchCartItems();
       } else {
         // Add new item to cart
         const { error } = await supabase
@@ -182,11 +193,12 @@ const StudentDashboard: React.FC = () => {
         if (error) throw error;
         
         // Decrease inventory by 1
-        await updateInventory(menuItem.id, -1);
+        await updateInventoryAndRefresh(menuItem.id, -1);
         
-        // Refresh cart to get updated data
+        // Refresh cart
         await fetchCartItems();
       }
+      
       showToast('Item added to cart!', 'success');
     } catch (error) {
       console.error('Error adding to cart:', error);
@@ -196,7 +208,7 @@ const StudentDashboard: React.FC = () => {
     }
   };
 
-  const updateCartQuantity = async (cartItemId: string, quantity: number) => {
+  const updateCartQuantity = async (cartItemId: string, newQuantity: number) => {
     if (updatingCart === cartItemId) return;
     
     setUpdatingCart(cartItemId);
@@ -204,10 +216,11 @@ const StudentDashboard: React.FC = () => {
       const cartItem = cartItems.find(item => item.id === cartItemId);
       if (!cartItem) return;
 
-      const quantityDifference = quantity - cartItem.quantity;
+      const oldQuantity = cartItem.quantity;
+      const quantityDifference = newQuantity - oldQuantity;
 
-      if (quantity <= 0) {
-        // Remove item from cart
+      if (newQuantity <= 0) {
+        // Remove item from cart completely
         const { error } = await supabase
           .from('cart_items')
           .delete()
@@ -215,8 +228,8 @@ const StudentDashboard: React.FC = () => {
 
         if (error) throw error;
         
-        // Increase inventory by the quantity that was in cart
-        await updateInventory(cartItem.menu_item_id, cartItem.quantity);
+        // Return all quantity back to inventory
+        await updateInventoryAndRefresh(cartItem.menu_item_id, oldQuantity);
         
         showToast('Item removed from cart', 'success');
       } else {
@@ -240,16 +253,16 @@ const StudentDashboard: React.FC = () => {
         // Update cart quantity
         const { error } = await supabase
           .from('cart_items')
-          .update({ quantity })
+          .update({ quantity: newQuantity })
           .eq('id', cartItemId);
 
         if (error) throw error;
 
-        // Update inventory (negative quantityDifference means we're adding to cart, positive means removing from cart)
-        await updateInventory(cartItem.menu_item_id, -quantityDifference);
+        // Update inventory (negative quantityDifference means we're taking from inventory)
+        await updateInventoryAndRefresh(cartItem.menu_item_id, -quantityDifference);
       }
 
-      // Refresh cart to get updated data
+      // Refresh cart
       await fetchCartItems();
     } catch (error) {
       console.error('Error updating cart quantity:', error);
@@ -303,8 +316,8 @@ const StudentDashboard: React.FC = () => {
 
       if (clearCartError) throw clearCartError;
 
-      // Refresh both menu and cart to show updated quantities
-      await refreshMenuAndCart();
+      // Refresh cart and menu
+      await Promise.all([fetchCartItems(), fetchMenuItems()]);
 
       setIsCartOpen(false);
       showToast('Order placed successfully! Your cosmic feast is being prepared!', 'success');
@@ -341,19 +354,6 @@ const StudentDashboard: React.FC = () => {
 
   const isItemInCart = (menuItemId: string) => {
     return cartItems.find(item => item.menu_item_id === menuItemId);
-  };
-
-  const getMaxQuantityForItem = (menuItem: MenuItem) => {
-    const cartItem = isItemInCart(menuItem.id);
-    if (cartItem) {
-      return menuItem.quantity_available;
-    }
-    return menuItem.quantity_available;
-  };
-
-  const getAvailableQuantityForItem = (menuItem: MenuItem) => {
-    // Since inventory is updated in real-time, the quantity_available already reflects what's actually available
-    return menuItem.quantity_available;
   };
 
   const filteredItems = menuItems.filter(item => {
@@ -463,8 +463,7 @@ const StudentDashboard: React.FC = () => {
             <div className="responsive-grid">
               {filteredItems.map((item) => {
                 const isOutOfStock = item.quantity_available <= 0;
-                const availableQuantity = getAvailableQuantityForItem(item);
-                const canAddToCart = availableQuantity > 0;
+                const canAddToCart = item.quantity_available > 0;
                 
                 return (
                   <div key={item.id} className={`glass-card rounded-xl overflow-hidden hover-lift transition-all duration-300 ${isOutOfStock ? 'opacity-60' : ''}`}>
