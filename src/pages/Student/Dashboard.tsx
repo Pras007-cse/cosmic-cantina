@@ -113,6 +113,36 @@ const StudentDashboard: React.FC = () => {
     await Promise.all([fetchMenuItems(), fetchCartItems()]);
   };
 
+  // Helper function to update inventory in database
+  const updateInventory = async (menuItemId: string, quantityChange: number) => {
+    try {
+      // Get current quantity
+      const { data: currentItem, error: fetchError } = await supabase
+        .from('menu_items')
+        .select('quantity_available')
+        .eq('id', menuItemId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const newQuantity = currentItem.quantity_available + quantityChange;
+      
+      // Update the inventory
+      const { error: updateError } = await supabase
+        .from('menu_items')
+        .update({ quantity_available: Math.max(0, newQuantity) })
+        .eq('id', menuItemId);
+
+      if (updateError) throw updateError;
+
+      // Refresh menu items to show updated quantities
+      await fetchMenuItems();
+    } catch (error) {
+      console.error('Error updating inventory:', error);
+      throw error;
+    }
+  };
+
   const addToCart = async (menuItem: MenuItem) => {
     if (addingToCart === menuItem.id) return;
     
@@ -136,8 +166,11 @@ const StudentDashboard: React.FC = () => {
           showToast(`Only ${menuItem.quantity_available} items available`, 'error');
           return;
         }
+        
+        // Update cart quantity
         await updateCartQuantity(existingItem.id, existingItem.quantity + 1);
       } else {
+        // Add new item to cart
         const { error } = await supabase
           .from('cart_items')
           .insert({
@@ -148,8 +181,11 @@ const StudentDashboard: React.FC = () => {
 
         if (error) throw error;
         
-        // Refresh both menu and cart to get updated quantities
-        await refreshMenuAndCart();
+        // Decrease inventory by 1
+        await updateInventory(menuItem.id, -1);
+        
+        // Refresh cart to get updated data
+        await fetchCartItems();
       }
       showToast('Item added to cart!', 'success');
     } catch (error) {
@@ -165,19 +201,27 @@ const StudentDashboard: React.FC = () => {
     
     setUpdatingCart(cartItemId);
     try {
+      const cartItem = cartItems.find(item => item.id === cartItemId);
+      if (!cartItem) return;
+
+      const quantityDifference = quantity - cartItem.quantity;
+
       if (quantity <= 0) {
+        // Remove item from cart
         const { error } = await supabase
           .from('cart_items')
           .delete()
           .eq('id', cartItemId);
 
         if (error) throw error;
+        
+        // Increase inventory by the quantity that was in cart
+        await updateInventory(cartItem.menu_item_id, cartItem.quantity);
+        
         showToast('Item removed from cart', 'success');
       } else {
-        // Get the cart item to check against available quantity
-        const cartItem = cartItems.find(item => item.id === cartItemId);
-        if (cartItem) {
-          // Get the latest menu item data to check current availability
+        // Check if we have enough inventory for the increase
+        if (quantityDifference > 0) {
           const { data: currentMenuItem, error: menuError } = await supabase
             .from('menu_items')
             .select('quantity_available')
@@ -186,23 +230,27 @@ const StudentDashboard: React.FC = () => {
 
           if (menuError) throw menuError;
 
-          if (quantity > currentMenuItem.quantity_available) {
-            showToast(`Only ${currentMenuItem.quantity_available} items available`, 'error');
+          if (quantityDifference > currentMenuItem.quantity_available) {
+            showToast(`Only ${currentMenuItem.quantity_available} more items available`, 'error');
             setUpdatingCart(null);
             return;
           }
         }
 
+        // Update cart quantity
         const { error } = await supabase
           .from('cart_items')
           .update({ quantity })
           .eq('id', cartItemId);
 
         if (error) throw error;
+
+        // Update inventory (negative quantityDifference means we're adding to cart, positive means removing from cart)
+        await updateInventory(cartItem.menu_item_id, -quantityDifference);
       }
 
-      // Refresh both menu and cart to get updated quantities
-      await refreshMenuAndCart();
+      // Refresh cart to get updated data
+      await fetchCartItems();
     } catch (error) {
       console.error('Error updating cart quantity:', error);
       showToast('Failed to update cart', 'error');
@@ -218,24 +266,6 @@ const StudentDashboard: React.FC = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
-
-      // Check availability before proceeding with fresh data
-      for (const cartItem of cartItems) {
-        const { data: currentItem, error } = await supabase
-          .from('menu_items')
-          .select('quantity_available')
-          .eq('id', cartItem.menu_item_id)
-          .single();
-
-        if (error) throw error;
-
-        if (currentItem.quantity_available < cartItem.quantity) {
-          showToast(`${cartItem.menu_item.name} has insufficient stock. Only ${currentItem.quantity_available} available.`, 'error');
-          // Refresh data to show current availability
-          await refreshMenuAndCart();
-          return;
-        }
-      }
 
       const totalAmount = cartItems.reduce((sum, item) => sum + (item.menu_item.price * item.quantity), 0);
 
@@ -265,19 +295,7 @@ const StudentDashboard: React.FC = () => {
 
       if (orderItemsError) throw orderItemsError;
 
-      // Update inventory quantities
-      for (const item of cartItems) {
-        const { error: updateError } = await supabase
-          .from('menu_items')
-          .update({ 
-            quantity_available: item.menu_item.quantity_available - item.quantity 
-          })
-          .eq('id', item.menu_item_id);
-
-        if (updateError) throw updateError;
-      }
-
-      // Clear cart
+      // Clear cart (inventory is already updated when items were added to cart)
       const { error: clearCartError } = await supabase
         .from('cart_items')
         .delete()
@@ -334,10 +352,7 @@ const StudentDashboard: React.FC = () => {
   };
 
   const getAvailableQuantityForItem = (menuItem: MenuItem) => {
-    const cartItem = isItemInCart(menuItem.id);
-    if (cartItem) {
-      return menuItem.quantity_available - cartItem.quantity;
-    }
+    // Since inventory is updated in real-time, the quantity_available already reflects what's actually available
     return menuItem.quantity_available;
   };
 
@@ -496,7 +511,6 @@ const StudentDashboard: React.FC = () => {
                           <span>
                             {addingToCart === item.id ? 'Adding...' : 
                              isOutOfStock ? 'Out of Stock' : 
-                             !canAddToCart ? 'Max in Cart' : 
                              'Add to Cart'}
                           </span>
                         </button>
@@ -649,8 +663,8 @@ const StudentDashboard: React.FC = () => {
               ) : (
                 <div className="space-y-4">
                   {cartItems.map((item) => {
-                    const maxQuantity = item.menu_item.quantity_available + item.quantity; // Total available including what's in cart
-                    const canIncrease = item.quantity < maxQuantity;
+                    const currentAvailable = item.menu_item.quantity_available;
+                    const canIncrease = currentAvailable > 0;
                     
                     return (
                       <div key={item.id} className="glass-morphism rounded-lg p-4 border border-white/10">
@@ -664,7 +678,7 @@ const StudentDashboard: React.FC = () => {
                             <h4 className="font-medium text-white">{item.menu_item.name}</h4>
                             <p className="text-sm text-cosmic-400">₹{item.menu_item.price}</p>
                             <p className="text-xs text-gray-500">{item.menu_item.canteen_name}</p>
-                            <p className="text-xs text-gray-500">Available: {item.menu_item.quantity_available}</p>
+                            <p className="text-xs text-gray-500">Available: {currentAvailable}</p>
                           </div>
                           <div className="flex items-center space-x-2">
                             <button
@@ -688,7 +702,7 @@ const StudentDashboard: React.FC = () => {
                         </div>
                         {!canIncrease && (
                           <div className="mt-2 text-xs text-yellow-400">
-                            Maximum available quantity in cart
+                            No more items available in stock
                           </div>
                         )}
                       </div>
