@@ -27,6 +27,7 @@ const StudentDashboard: React.FC = () => {
   const [updatingCart, setUpdatingCart] = useState<string | null>(null);
   const [addingToCart, setAddingToCart] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0); // Force re-render key
 
   const showToast = (message: string, type: 'success' | 'error') => {
     const id = Date.now().toString();
@@ -43,7 +44,7 @@ const StudentDashboard: React.FC = () => {
     if (activeTab === 'orders') {
       fetchOrders();
     }
-  }, [activeTab]);
+  }, [activeTab, refreshKey]); // Add refreshKey as dependency
 
   const fetchMenuItems = async () => {
     try {
@@ -54,6 +55,7 @@ const StudentDashboard: React.FC = () => {
 
       if (error) throw error;
       setMenuItems(data || []);
+      console.log('Menu items fetched:', data?.length || 0);
     } catch (error) {
       console.error('Error fetching menu items:', error);
     } finally {
@@ -108,7 +110,7 @@ const StudentDashboard: React.FC = () => {
     }
   };
 
-  // Helper function to update inventory in database and refresh menu
+  // Helper function to update inventory in database and force UI refresh
   const updateInventoryAndRefresh = async (menuItemId: string, quantityChange: number) => {
     try {
       // Get current quantity
@@ -130,10 +132,20 @@ const StudentDashboard: React.FC = () => {
 
       if (updateError) throw updateError;
 
-      // Immediately refresh menu items to show updated quantities
-      await fetchMenuItems();
-      
       console.log(`Inventory updated: Item ${menuItemId}, Change: ${quantityChange}, New Quantity: ${newQuantity}`);
+      
+      // Force immediate UI refresh by updating the local state
+      setMenuItems(prevItems => 
+        prevItems.map(item => 
+          item.id === menuItemId 
+            ? { ...item, quantity_available: newQuantity }
+            : item
+        )
+      );
+      
+      // Also trigger a fresh fetch to ensure data consistency
+      setRefreshKey(prev => prev + 1);
+      
     } catch (error) {
       console.error('Error updating inventory:', error);
       throw error;
@@ -175,7 +187,7 @@ const StudentDashboard: React.FC = () => {
 
         if (cartError) throw cartError;
         
-        // Decrease inventory by 1
+        // Decrease inventory by 1 and refresh UI
         await updateInventoryAndRefresh(menuItem.id, -1);
         
         // Refresh cart
@@ -192,7 +204,7 @@ const StudentDashboard: React.FC = () => {
 
         if (error) throw error;
         
-        // Decrease inventory by 1
+        // Decrease inventory by 1 and refresh UI
         await updateInventoryAndRefresh(menuItem.id, -1);
         
         // Refresh cart
@@ -228,20 +240,15 @@ const StudentDashboard: React.FC = () => {
 
         if (error) throw error;
         
-        // Return all quantity back to inventory
+        // Return all quantity back to inventory and refresh UI
         await updateInventoryAndRefresh(cartItem.menu_item_id, oldQuantity);
         
         showToast('Item removed from cart', 'success');
       } else {
         // Check if we have enough inventory for the increase
         if (quantityDifference > 0) {
-          const { data: currentMenuItem, error: menuError } = await supabase
-            .from('menu_items')
-            .select('quantity_available')
-            .eq('id', cartItem.menu_item_id)
-            .single();
-
-          if (menuError) throw menuError;
+          const currentMenuItem = menuItems.find(item => item.id === cartItem.menu_item_id);
+          if (!currentMenuItem) return;
 
           if (quantityDifference > currentMenuItem.quantity_available) {
             showToast(`Only ${currentMenuItem.quantity_available} more items available`, 'error');
@@ -258,7 +265,7 @@ const StudentDashboard: React.FC = () => {
 
         if (error) throw error;
 
-        // Update inventory (negative quantityDifference means we're taking from inventory)
+        // Update inventory and refresh UI (negative quantityDifference means we're taking from inventory)
         await updateInventoryAndRefresh(cartItem.menu_item_id, -quantityDifference);
       }
 
@@ -466,7 +473,7 @@ const StudentDashboard: React.FC = () => {
                 const canAddToCart = item.quantity_available > 0;
                 
                 return (
-                  <div key={item.id} className={`glass-card rounded-xl overflow-hidden hover-lift transition-all duration-300 ${isOutOfStock ? 'opacity-60' : ''}`}>
+                  <div key={`${item.id}-${item.quantity_available}`} className={`glass-card rounded-xl overflow-hidden hover-lift transition-all duration-300 ${isOutOfStock ? 'opacity-60' : ''}`}>
                     <div className="relative">
                       <img
                         src={item.image_url}
@@ -493,7 +500,7 @@ const StudentDashboard: React.FC = () => {
                       <p className="text-gray-400 mb-4">{item.description}</p>
                       <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
                         <span>Serves: {item.serves}</span>
-                        <span className={`${isOutOfStock ? 'text-red-400' : 'text-gray-500'}`}>
+                        <span className={`font-medium ${isOutOfStock ? 'text-red-400' : 'text-green-400'}`}>
                           Available: {item.quantity_available}
                         </span>
                       </div>
@@ -662,7 +669,8 @@ const StudentDashboard: React.FC = () => {
               ) : (
                 <div className="space-y-4">
                   {cartItems.map((item) => {
-                    const currentAvailable = item.menu_item.quantity_available;
+                    const currentMenuItem = menuItems.find(menuItem => menuItem.id === item.menu_item_id);
+                    const currentAvailable = currentMenuItem?.quantity_available || 0;
                     const canIncrease = currentAvailable > 0;
                     
                     return (
