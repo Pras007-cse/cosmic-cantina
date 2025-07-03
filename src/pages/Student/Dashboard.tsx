@@ -25,6 +25,7 @@ const StudentDashboard: React.FC = () => {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [updatingCart, setUpdatingCart] = useState<string | null>(null);
+  const [addingToCart, setAddingToCart] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -108,6 +109,16 @@ const StudentDashboard: React.FC = () => {
   };
 
   const addToCart = async (menuItem: MenuItem) => {
+    if (addingToCart === menuItem.id) return;
+    
+    // Check if item is out of stock
+    if (menuItem.quantity_available <= 0) {
+      showToast('This item is currently out of stock', 'error');
+      return;
+    }
+
+    setAddingToCart(menuItem.id);
+    
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -115,6 +126,11 @@ const StudentDashboard: React.FC = () => {
       const existingItem = cartItems.find(item => item.menu_item_id === menuItem.id);
 
       if (existingItem) {
+        // Check if adding one more would exceed available quantity
+        if (existingItem.quantity >= menuItem.quantity_available) {
+          showToast(`Only ${menuItem.quantity_available} items available`, 'error');
+          return;
+        }
         await updateCartQuantity(existingItem.id, existingItem.quantity + 1);
       } else {
         const { error } = await supabase
@@ -132,6 +148,8 @@ const StudentDashboard: React.FC = () => {
     } catch (error) {
       console.error('Error adding to cart:', error);
       showToast('Failed to add item to cart', 'error');
+    } finally {
+      setAddingToCart(null);
     }
   };
 
@@ -174,6 +192,24 @@ const StudentDashboard: React.FC = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
+      // Check availability before proceeding
+      for (const cartItem of cartItems) {
+        const { data: currentItem, error } = await supabase
+          .from('menu_items')
+          .select('quantity_available')
+          .eq('id', cartItem.menu_item_id)
+          .single();
+
+        if (error) throw error;
+
+        if (currentItem.quantity_available < cartItem.quantity) {
+          showToast(`${cartItem.menu_item.name} has insufficient stock. Only ${currentItem.quantity_available} available.`, 'error');
+          await fetchMenuItems();
+          await fetchCartItems();
+          return;
+        }
+      }
+
       const totalAmount = cartItems.reduce((sum, item) => sum + (item.menu_item.price * item.quantity), 0);
 
       const { data: order, error: orderError } = await supabase
@@ -202,6 +238,7 @@ const StudentDashboard: React.FC = () => {
 
       if (orderItemsError) throw orderItemsError;
 
+      // Update inventory quantities
       for (const item of cartItems) {
         const { error: updateError } = await supabase
           .from('menu_items')
@@ -213,6 +250,7 @@ const StudentDashboard: React.FC = () => {
         if (updateError) throw updateError;
       }
 
+      // Clear cart
       const { error: clearCartError } = await supabase
         .from('cart_items')
         .delete()
@@ -254,6 +292,18 @@ const StudentDashboard: React.FC = () => {
       case 'cancelled': return <AlertCircle className="w-4 h-4" />;
       default: return <Clock className="w-4 h-4" />;
     }
+  };
+
+  const isItemInCart = (menuItemId: string) => {
+    return cartItems.find(item => item.menu_item_id === menuItemId);
+  };
+
+  const getMaxQuantityForItem = (menuItem: MenuItem) => {
+    const cartItem = isItemInCart(menuItem.id);
+    if (cartItem) {
+      return menuItem.quantity_available - cartItem.quantity;
+    }
+    return menuItem.quantity_available;
   };
 
   const filteredItems = menuItems.filter(item => {
@@ -361,43 +411,65 @@ const StudentDashboard: React.FC = () => {
 
             {/* Menu Items */}
             <div className="responsive-grid">
-              {filteredItems.map((item) => (
-                <div key={item.id} className="glass-card rounded-xl overflow-hidden hover-lift transition-all duration-300">
-                  <div className="relative">
-                    <img
-                      src={item.image_url}
-                      alt={item.name}
-                      className="w-full h-48 object-cover"
-                    />
-                    <div className="absolute top-2 right-2 glass-morphism px-2 py-1 rounded-lg flex items-center border border-white/20">
-                      <Star className="w-4 h-4 text-yellow-400 fill-current" />
-                      <span className="ml-1 text-sm font-medium text-white">{item.rating}</span>
+              {filteredItems.map((item) => {
+                const isOutOfStock = item.quantity_available <= 0;
+                const maxQuantity = getMaxQuantityForItem(item);
+                const canAddToCart = maxQuantity > 0;
+                
+                return (
+                  <div key={item.id} className={`glass-card rounded-xl overflow-hidden hover-lift transition-all duration-300 ${isOutOfStock ? 'opacity-60' : ''}`}>
+                    <div className="relative">
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="w-full h-48 object-cover"
+                      />
+                      <div className="absolute top-2 right-2 glass-morphism px-2 py-1 rounded-lg flex items-center border border-white/20">
+                        <Star className="w-4 h-4 text-yellow-400 fill-current" />
+                        <span className="ml-1 text-sm font-medium text-white">{item.rating}</span>
+                      </div>
+                      {isOutOfStock && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                          <div className="glass-morphism px-4 py-2 rounded-lg border border-red-500/30">
+                            <span className="text-red-400 font-semibold text-sm">OUT OF STOCK</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-6">
+                      <div className="flex justify-between items-start mb-2">
+                        <h3 className="text-xl font-semibold text-white">{item.name}</h3>
+                        <span className="text-2xl font-bold cosmic-text">₹{item.price}</span>
+                      </div>
+                      <p className="text-gray-400 mb-4">{item.description}</p>
+                      <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
+                        <span>Serves: {item.serves}</span>
+                        <span className={`${isOutOfStock ? 'text-red-400' : 'text-gray-500'}`}>
+                          Available: {item.quantity_available}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-cosmic-400">{item.canteen_name}</span>
+                        <button
+                          onClick={() => addToCart(item)}
+                          disabled={!canAddToCart || addingToCart === item.id}
+                          className={`flex items-center space-x-2 ios-button text-white px-4 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            canAddToCart ? 'cosmic-glow' : ''
+                          }`}
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>
+                            {addingToCart === item.id ? 'Adding...' : 
+                             isOutOfStock ? 'Out of Stock' : 
+                             !canAddToCart ? 'Max in Cart' : 
+                             'Add to Cart'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div className="p-6">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-xl font-semibold text-white">{item.name}</h3>
-                      <span className="text-2xl font-bold cosmic-text">₹{item.price}</span>
-                    </div>
-                    <p className="text-gray-400 mb-4">{item.description}</p>
-                    <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
-                      <span>Serves: {item.serves}</span>
-                      <span>Available: {item.quantity_available}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-cosmic-400">{item.canteen_name}</span>
-                      <button
-                        onClick={() => addToCart(item)}
-                        disabled={item.quantity_available <= 0}
-                        className="flex items-center space-x-2 ios-button text-white px-4 py-2 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cosmic-glow"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>Add to Cart</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {filteredItems.length === 0 && (
@@ -541,41 +613,52 @@ const StudentDashboard: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {cartItems.map((item) => (
-                    <div key={item.id} className="glass-morphism rounded-lg p-4 border border-white/10">
-                      <div className="flex items-center space-x-4">
-                        <img
-                          src={item.menu_item.image_url}
-                          alt={item.menu_item.name}
-                          className="w-16 h-16 object-cover rounded-lg"
-                        />
-                        <div className="flex-1">
-                          <h4 className="font-medium text-white">{item.menu_item.name}</h4>
-                          <p className="text-sm text-cosmic-400">₹{item.menu_item.price}</p>
-                          <p className="text-xs text-gray-500">{item.menu_item.canteen_name}</p>
+                  {cartItems.map((item) => {
+                    const maxQuantity = item.menu_item.quantity_available;
+                    const canIncrease = item.quantity < maxQuantity;
+                    
+                    return (
+                      <div key={item.id} className="glass-morphism rounded-lg p-4 border border-white/10">
+                        <div className="flex items-center space-x-4">
+                          <img
+                            src={item.menu_item.image_url}
+                            alt={item.menu_item.name}
+                            className="w-16 h-16 object-cover rounded-lg"
+                          />
+                          <div className="flex-1">
+                            <h4 className="font-medium text-white">{item.menu_item.name}</h4>
+                            <p className="text-sm text-cosmic-400">₹{item.menu_item.price}</p>
+                            <p className="text-xs text-gray-500">{item.menu_item.canteen_name}</p>
+                            <p className="text-xs text-gray-500">Available: {maxQuantity}</p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => updateCartQuantity(item.id, item.quantity - 1)}
+                              disabled={updatingCart === item.id}
+                              className="w-8 h-8 flex items-center justify-center rounded-full glass-morphism hover:bg-white/10 transition-colors disabled:opacity-50 border border-white/20"
+                            >
+                              <Minus className="w-4 h-4 text-white" />
+                            </button>
+                            <span className="w-8 text-center font-medium text-white">
+                              {updatingCart === item.id ? '...' : item.quantity}
+                            </span>
+                            <button
+                              onClick={() => updateCartQuantity(item.id, item.quantity + 1)}
+                              disabled={updatingCart === item.id || !canIncrease}
+                              className="w-8 h-8 flex items-center justify-center rounded-full glass-morphism hover:bg-white/10 transition-colors disabled:opacity-50 border border-white/20"
+                            >
+                              <Plus className="w-4 h-4 text-white" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={() => updateCartQuantity(item.id, item.quantity - 1)}
-                            disabled={updatingCart === item.id}
-                            className="w-8 h-8 flex items-center justify-center rounded-full glass-morphism hover:bg-white/10 transition-colors disabled:opacity-50 border border-white/20"
-                          >
-                            <Minus className="w-4 h-4 text-white" />
-                          </button>
-                          <span className="w-8 text-center font-medium text-white">
-                            {updatingCart === item.id ? '...' : item.quantity}
-                          </span>
-                          <button
-                            onClick={() => updateCartQuantity(item.id, item.quantity + 1)}
-                            disabled={updatingCart === item.id}
-                            className="w-8 h-8 flex items-center justify-center rounded-full glass-morphism hover:bg-white/10 transition-colors disabled:opacity-50 border border-white/20"
-                          >
-                            <Plus className="w-4 h-4 text-white" />
-                          </button>
-                        </div>
+                        {!canIncrease && (
+                          <div className="mt-2 text-xs text-yellow-400">
+                            Maximum available quantity in cart
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

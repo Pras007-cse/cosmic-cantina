@@ -23,7 +23,7 @@ const Header: React.FC<HeaderProps> = ({ title, showCart = false, cartCount = 0,
               </div>
               <div>
                 <span className="text-xl font-bold cosmic-text tracking-wide">Cosmic Cantina</span>
-                <div className="text-xs text-gray-400 font-medium">Premium Digital Dining</div>
+                <div className="text-xs text-gray-400 font-medium">Digital Dining System</div>
               </div>
             </div>
             <div className="ml-8">

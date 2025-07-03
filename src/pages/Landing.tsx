@@ -60,7 +60,7 @@ const Landing: React.FC = () => {
               </div>
               <div>
                 <span className="text-2xl sm:text-3xl font-bold cosmic-text tracking-wider">Cosmic Cantina</span>
-                <div className="text-sm text-gray-400 font-medium">Premium Digital Dining</div>
+                <div className="text-sm text-gray-400 font-medium">Digital Dining System</div>
               </div>
             </div>
           </div>
@@ -73,7 +73,7 @@ const Landing: React.FC = () => {
           <div className="mb-8">
             <div className="inline-flex items-center space-x-2 glass-morphism px-6 py-3 rounded-full border border-white/20 mb-8 hover-lift cosmic-glow">
               <Star className="w-5 h-5 text-blue-400" />
-              <span className="text-blue-300 text-sm font-medium">Premium Digital Dining Experience</span>
+              <span className="text-blue-300 text-sm font-medium">Smart Digital Ordering</span>
               <Sparkles className="w-5 h-5 text-purple-400" />
             </div>
           </div>
@@ -84,7 +84,7 @@ const Landing: React.FC = () => {
           </h1>
           
           <p className="text-lg sm:text-xl text-gray-300 max-w-3xl mx-auto mb-8 sm:mb-12 leading-relaxed px-4">
-            Experience premium cuisine with cutting-edge technology. Pre-order your favorite meals 
+            Experience quality cuisine with cutting-edge technology. Pre-order your favorite meals 
             and skip the lunch rush with our intelligent ordering system.
           </p>
 
@@ -95,7 +95,7 @@ const Landing: React.FC = () => {
             </div>
             <div className="flex items-center space-x-3 glass-card px-5 py-3 rounded-xl hover-lift">
               <Shield className="w-5 h-5 text-purple-400" />
-              <span className="text-sm font-medium text-white">Premium Quality</span>
+              <span className="text-sm font-medium text-white">Quality Food</span>
             </div>
             <div className="flex items-center space-x-3 glass-card px-5 py-3 rounded-xl hover-lift">
               <Zap className="w-5 h-5 text-yellow-400" />
@@ -116,7 +116,7 @@ const Landing: React.FC = () => {
                 </div>
                 <h3 className="text-2xl sm:text-3xl font-bold text-white mb-4 group-hover:text-blue-300 transition-colors">Student Portal</h3>
                 <p className="text-gray-300 mb-6 sm:mb-8 leading-relaxed text-base sm:text-lg">
-                  Browse premium menus, place orders instantly, and track your food status in real-time. 
+                  Browse menus, place orders instantly, and track your food status in real-time. 
                   Perfect for busy students who value quality and efficiency.
                 </p>
                 <div className="flex items-center text-blue-400 font-semibold group-hover:text-blue-300 transition-colors text-base sm:text-lg">
@@ -163,7 +163,7 @@ const Landing: React.FC = () => {
             },
             {
               icon: Utensils,
-              title: "Premium Cuisine",
+              title: "Quality Cuisine",
               description: "Curated selection of high-quality dishes from expert chefs.",
               color: "blue",
               delay: "0.2s"
